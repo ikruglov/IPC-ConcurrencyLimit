@@ -1,11 +1,12 @@
-package IPC::ConcurrencyLimit::Lock::Flock;
+package IPC::ConcurrencyLimit::Lock::Fcntl;
 use 5.008001;
 use strict;
 use warnings;
 use Carp qw(croak);
 use File::Path qw();
 use File::Spec;
-use Fcntl qw(:DEFAULT :flock);
+use Fcntl qw(:DEFAULT);
+use File::FcntlLock;
 use IO::File ();
 
 use IPC::ConcurrencyLimit::Lock;
@@ -42,7 +43,13 @@ sub _get_lock {
   my $self = shift;
 
   File::Path::mkpath($self->{path});
-  my $lock_mode_flag = $self->{lock_mode} eq 'shared' ? LOCK_SH : LOCK_EX;
+
+  my $fs = File::FcntlLock->new(
+    l_type   => $self->{lock_mode} eq 'shared' ? F_RDLCK : F_WRLCK,
+    l_whence => SEEK_SET,
+    l_start  => 0,
+    l_len    => 0,
+  );
 
   for my $worker (1 .. $self->{max_procs}) {
     my $lock_file = File::Spec->catfile($self->{path}, "$worker.lock");
@@ -50,7 +57,7 @@ sub _get_lock {
     sysopen(my $fh, $lock_file, O_RDWR|O_CREAT)
       or die "can't open '$lock_file': $!";
 
-    if (flock($fh, $lock_mode_flag|LOCK_NB)) {
+    if ($fs->lock($fh, F_SETLK)) {
       $self->{lock_fh} = $fh;
       seek($fh, 0, 0);
       truncate($fh, 0);
@@ -84,7 +91,7 @@ __END__
 
 =head1 NAME
 
-IPC::ConcurrencyLimit::Lock::Flock - flock() based locking
+IPC::ConcurrencyLimit::Lock::Fcntl- fcntl() based locking
 
 =head1 SYNOPSIS
 
@@ -92,14 +99,11 @@ IPC::ConcurrencyLimit::Lock::Flock - flock() based locking
 
 =head1 DESCRIPTION
 
-This locking strategy implements C<flock()> based concurrency control.
-Requires that your system has a sane C<flock()> implementation as well
-as a non-blocking C<flock()> mode.
+This locking strategy implements C<fcntl()> based concurrency control.
+Requires that your system has a sane C<fcntl()> implementation as well
+as a non-blocking C<fcntl()> mode.
 
 Inherits from L<IPC::LimitConcurrency::Lock>.
-
-Take care not to attempt to use this on an NFS share or any other file
-system that does not implement atomic C<flock()>!
 
 =head1 METHODS
 
@@ -149,11 +153,18 @@ Returns the directory in which the lock files resides.
 
 =head1 NOTES
 
-Be aware of that C<flock()> locks are preserved across C<fork()>. It means that if after acquiring a lock a process does C<fork()>, it will share the lock with the child. And if the parent happens to die, the lock will be still in place. For more details consult to C<man flock>.
+Beaware of one disadvantage of C<fcnt()> type of locks: a lock is lost if ANY file descriptor referring to a file on which locks are held is closed. Excerpt from C<man fcntl>:
 
-If this strategy is not sutiable for you consider using fcntl backend.
+    As well as being removed by an explicit F_UNLCK, record locks are automatically released when the process terminates or if it closes ANY file descriptor referring to a file on which locks are held.
+    This is bad: it means that a process can lose the locks on a file like /etc/passwd or /etc/mtab when for some reason a library function decides to open, read and close it.
+
+It means that you should not open/close lock files inside the proccess which holds the locks. For more details consult to C<man fcntl>.
+
+If this strategy is not sutiable for you consider using flock backend.
 
 =head1 AUTHOR
+
+Ivan Kruglov, C<ivan.kruglov@yahoo.com>
 
 Steffen Mueller, C<smueller@cpan.org>
 
@@ -168,7 +179,7 @@ their gratitude.
 
 =head1 COPYRIGHT AND LICENSE
 
- (C) 2011, 2012 Steffen Mueller. All rights reserved.
+ (C) 2011, 2012, 2013 Steffen Mueller. All rights reserved.
  
  This code is available under the same license as Perl version
  5.8.1 or higher.

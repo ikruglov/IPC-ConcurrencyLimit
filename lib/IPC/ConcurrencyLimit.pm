@@ -228,6 +228,10 @@ Check whether the lock is still valid. If so,
 returns true. Otherwise, it releases (destroys) the lock
 and returns false.
 
+=head1 NOTES
+
+Consult documentation of each locking backend to learn their disadvantages
+
 =head1 AUTHOR
 
 Steffen Mueller, C<smueller@cpan.org>
